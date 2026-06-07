@@ -39,6 +39,7 @@ model Order {
   customerName  String
   customerEmail String
   customerPhone String
+  paymentMethod String      @default("evc_plus")
   amount        Decimal     @db.Decimal(10, 2)
   status        OrderStatus @default(PENDING)
   transactionId String?     @unique

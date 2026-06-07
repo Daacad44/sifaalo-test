@@ -12,7 +12,7 @@ const config = {
   port: Number(process.env.PORT) || 4000,
   logLevel: process.env.LOG_LEVEL || 'info',
 
-  corsOrigins: (process.env.CORS_ORIGIN || 'http://localhost:5173')
+  corsOrigins: (process.env.CORS_ORIGIN || 'http://localhost:5173,http://localhost:4000')
     .split(',')
     .map((o) => o.trim())
     .filter(Boolean),
@@ -21,18 +21,26 @@ const config = {
   testAmount: process.env.TEST_AMOUNT || '0.10',
 
   sifalo: {
+    // Merchant dashboard → https://pay.sifalo.com/business/merchant/api
+    apiUsername:
+      process.env.SIFALO_API_USERNAME ||
+      process.env.SIFALO_API_USER ||
+      '',
     apiKey: process.env.SIFALO_API_KEY || '',
-    secretKey: process.env.SIFALO_SECRET_KEY || '',
-    baseUrl: process.env.SIFALO_BASE_URL || 'https://api.sifalopay.com',
-    merchantId: process.env.SIFALO_MERCHANT_ID || '',
-    createPath: process.env.SIFALO_CREATE_PATH || '/v1/payments',
-    verifyPath: process.env.SIFALO_VERIFY_PATH || '/v1/payments',
+    gatewayUrl:
+      process.env.SIFALO_GATEWAY_URL || 'https://api.sifalopay.com/gateway/',
+    verifyUrl:
+      process.env.SIFALO_VERIFY_URL ||
+      'https://api.sifalopay.com/gateway/verify.php',
+    storeUrl: process.env.SIFALO_STORE_URL || 'http://localhost:4000',
+    currency: process.env.SIFALO_CURRENCY || 'USD',
+    channel: process.env.SIFALO_CHANNEL || 'api',
     webhookSecret: process.env.SIFALO_WEBHOOK_SECRET || '',
     callbackUrl:
       process.env.SIFALO_CALLBACK_URL ||
       'http://localhost:4000/api/webhooks/sifalopay',
-    returnUrl: process.env.SIFALO_RETURN_URL || 'http://localhost:5173/status',
-    timeoutMs: Number(process.env.SIFALO_TIMEOUT_MS) || 15000,
+    returnUrl: process.env.SIFALO_RETURN_URL || 'http://localhost:4000/status',
+    timeoutMs: Number(process.env.SIFALO_TIMEOUT_MS) || 45000,
   },
 };
 

@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import config from '../config/index.js';
+import { PAYMENT_METHODS } from '../constants/paymentMethods.js';
 import productRoutes from './product.routes.js';
 import paymentRoutes from './payment.routes.js';
 import webhookRoutes from './webhook.routes.js';
@@ -24,6 +25,10 @@ router.get('/config', (_req, res) => {
       testMode: config.testMode,
       testAmount: config.testAmount,
       provider: 'SifaloPay',
+      paymentMethods: PAYMENT_METHODS,
+      credentialsConfigured: Boolean(
+        config.sifalo.apiUsername && config.sifalo.apiKey
+      ),
     },
   });
 });

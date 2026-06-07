@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { getAdminStats, getAdminOrders } from '../api/services.js';
 import StatusBadge from '../components/StatusBadge.jsx';
 import { formatMoney, formatDate } from '../lib/format.js';
+import { getPaymentMethodLabel } from '../lib/paymentMethods.js';
 
 const STATUS_OPTIONS = ['ALL', 'PENDING', 'PROCESSING', 'PAID', 'FAILED'];
 
@@ -121,6 +122,7 @@ export default function Admin() {
                 <th className="px-4 py-3">Order</th>
                 <th className="px-4 py-3">Customer</th>
                 <th className="px-4 py-3">Amount</th>
+                <th className="px-4 py-3">Wallet</th>
                 <th className="px-4 py-3">Status</th>
                 <th className="px-4 py-3">Transaction</th>
                 <th className="px-4 py-3">Date</th>
@@ -130,13 +132,13 @@ export default function Admin() {
             <tbody className="divide-y divide-slate-100">
               {loading ? (
                 <tr>
-                  <td colSpan={7} className="px-4 py-10 text-center text-slate-400">
+                  <td colSpan={8} className="px-4 py-10 text-center text-slate-400">
                     Loading…
                   </td>
                 </tr>
               ) : orders.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-4 py-10 text-center text-slate-400">
+                  <td colSpan={8} className="px-4 py-10 text-center text-slate-400">
                     No orders found.
                   </td>
                 </tr>
@@ -151,6 +153,9 @@ export default function Admin() {
                       <div className="text-xs text-slate-400">{o.customerEmail}</div>
                     </td>
                     <td className="px-4 py-3 font-medium">{formatMoney(o.amount)}</td>
+                    <td className="px-4 py-3 text-xs text-slate-600">
+                      {getPaymentMethodLabel(o.paymentMethod)}
+                    </td>
                     <td className="px-4 py-3">
                       <StatusBadge status={o.status} />
                     </td>
