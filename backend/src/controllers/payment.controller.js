@@ -4,6 +4,7 @@ import logger from '../config/logger.js';
 import asyncHandler from '../utils/asyncHandler.js';
 import ApiError from '../utils/ApiError.js';
 import sifaloPayService from '../services/sifalopay.service.js';
+import { getPaymentMethodLabel } from '../constants/paymentMethods.js';
 
 const serializeOrder = (order) => ({
   ...order,
@@ -22,7 +23,13 @@ const serializeOrder = (order) => ({
  * 4. Persist transaction id and return checkout details
  */
 export const createPayment = asyncHandler(async (req, res) => {
-  const { productId, customerName, customerEmail, customerPhone } = req.body;
+  const {
+    productId,
+    customerName,
+    customerEmail,
+    customerPhone,
+    paymentMethod = 'evc_plus',
+  } = req.body;
 
   const product = await prisma.product.findUnique({ where: { id: productId } });
   if (!product) throw ApiError.notFound('Selected product does not exist');
@@ -37,6 +44,7 @@ export const createPayment = asyncHandler(async (req, res) => {
       customerName,
       customerEmail,
       customerPhone,
+      paymentMethod,
       amount,
       status: 'PENDING',
       payments: {
@@ -53,7 +61,9 @@ export const createPayment = asyncHandler(async (req, res) => {
     gateway = await sifaloPayService.createPayment({
       order,
       customerPhone,
+      paymentMethod,
       description: `${product.name} (Order ${order.id})`,
+      clientIp: req.ip,
     });
   } catch (error) {
     // Mark the order/payment as failed so the record is consistent.
@@ -130,7 +140,7 @@ export const verifyPayment = asyncHandler(async (req, res) => {
     throw ApiError.badRequest('This order has no transaction to verify yet');
   }
 
-  const result = await sifaloPayService.verifyPayment(order.transactionId);
+  const result = await sifaloPayService.verifyPayment(order.transactionId, order.id);
 
   const updated = await prisma.order.update({
     where: { id: order.id },
@@ -170,7 +180,8 @@ export const getPaymentStatus = asyncHandler(async (req, res) => {
       product: order.product
         ? { ...order.product, price: Number(order.product.price) }
         : null,
-      paymentMethod: 'SifaloPay',
+      paymentMethod: order.paymentMethod,
+      paymentMethodLabel: getPaymentMethodLabel(order.paymentMethod),
     },
   });
 });

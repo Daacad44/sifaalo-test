@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { PAYMENT_METHOD_IDS } from '../constants/paymentMethods.js';
 
 // East-African friendly phone validation: optional +, country code, 7-14 digits.
 const phoneRegex = /^\+?[0-9]{7,15}$/;
@@ -22,6 +23,13 @@ export const createPaymentSchema = z.object({
     .string()
     .trim()
     .regex(phoneRegex, 'Invalid phone number. Use digits only, e.g. 252612345678'),
+  paymentMethod: z
+    .enum(PAYMENT_METHOD_IDS, {
+      errorMap: () => ({
+        message: `paymentMethod must be one of: ${PAYMENT_METHOD_IDS.join(', ')}`,
+      }),
+    })
+    .default('evc_plus'),
 });
 
 export const verifyPaymentSchema = z.object({

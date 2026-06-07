@@ -3,6 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { getPaymentStatus, verifyPayment } from '../api/services.js';
 import StatusBadge from '../components/StatusBadge.jsx';
 import { formatMoney, formatDate } from '../lib/format.js';
+import { getPaymentMethodLabel } from '../lib/paymentMethods.js';
 
 const Row = ({ label, value, mono }) => (
   <div className="flex items-center justify-between gap-4 border-b border-slate-100 py-3 last:border-0">
@@ -119,7 +120,10 @@ export default function Status() {
             <Row label="Order ID" value={order.id} mono />
             <Row label="Transaction ID" value={order.transactionId} mono />
             <Row label="Amount" value={formatMoney(order.amount)} />
-            <Row label="Payment Method" value={order.paymentMethod || 'SifaloPay'} />
+            <Row
+              label="Payment Method"
+              value={order.paymentMethodLabel || getPaymentMethodLabel(order.paymentMethod)}
+            />
             <Row label="Customer" value={order.customerName} />
             <Row label="Email" value={order.customerEmail} />
             <Row label="Phone" value={order.customerPhone} />

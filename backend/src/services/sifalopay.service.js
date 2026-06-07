@@ -3,17 +3,19 @@ import axios from 'axios';
 import config from '../config/index.js';
 import logger from '../config/logger.js';
 import ApiError from '../utils/ApiError.js';
+import { getPaymentMethod } from '../constants/paymentMethods.js';
 
 /**
  * SifaloPay payment client.
  *
- * Everything (credentials, base URL, endpoint paths) is read from the
- * environment via `config`, so keys can be rotated and endpoints changed
- * WITHOUT modifying this source file.
+ * Authenticates with HTTP Basic Auth using the merchant dashboard credentials:
+ *   - API username (SIFALO_API_USERNAME)
+ *   - API key (SIFALO_API_KEY) — treat like a password; backend only.
  *
- * When `config.testMode` is true the client is fully simulated: no network
- * calls are made and deterministic fake responses are returned so the whole
- * order -> payment -> webhook -> status workflow can be exercised end to end.
+ * Live API reference: official Sifalo Pay WooCommerce plugin
+ * (POST https://api.sifalopay.com/gateway/ with Basic auth).
+ *
+ * When `config.testMode` is true the client is fully simulated.
  */
 class SifaloPayService {
   constructor() {
@@ -21,7 +23,6 @@ class SifaloPayService {
     this.cfg = config.sifalo;
 
     this.http = axios.create({
-      baseURL: this.cfg.baseUrl,
       timeout: this.cfg.timeoutMs,
       headers: {
         'Content-Type': 'application/json',
@@ -32,18 +33,31 @@ class SifaloPayService {
 
   // ------------------------------------------------------------------ helpers
 
+  /** HTTP Basic Auth: base64(api_username:api_key) */
   authHeaders() {
+    if (!this.cfg.apiUsername || !this.cfg.apiKey) {
+      return { 'Content-Type': 'application/json' };
+    }
+    const token = Buffer.from(
+      `${this.cfg.apiUsername}:${this.cfg.apiKey}`,
+      'utf8'
+    ).toString('base64');
     return {
-      'X-API-Key': this.cfg.apiKey,
-      Authorization: `Bearer ${this.cfg.secretKey}`,
-      ...(this.cfg.merchantId ? { 'X-Merchant-Id': this.cfg.merchantId } : {}),
+      'Content-Type': 'application/json',
+      Authorization: `Basic ${token}`,
     };
   }
 
-  /**
-   * Compute an HMAC-SHA256 signature of a raw payload using the webhook
-   * secret. Used to validate inbound webhooks.
-   */
+  assertCredentials() {
+    if (this.testMode) return;
+    if (!this.cfg.apiUsername || !this.cfg.apiKey) {
+      throw ApiError.gateway(
+        'SifaloPay credentials are not configured. Set SIFALO_API_USERNAME and SIFALO_API_KEY from your merchant dashboard (https://pay.sifalo.com/business/merchant/api).',
+        { code: 'MISSING_CREDENTIALS' }
+      );
+    }
+  }
+
   static computeSignature(rawBody, secret) {
     return crypto
       .createHmac('sha256', secret || '')
@@ -51,10 +65,6 @@ class SifaloPayService {
       .digest('hex');
   }
 
-  /**
-   * Constant-time comparison so webhook signature checks are not vulnerable to
-   * timing attacks.
-   */
   static safeCompare(a = '', b = '') {
     const bufA = Buffer.from(String(a));
     const bufB = Buffer.from(String(b));
@@ -63,8 +73,6 @@ class SifaloPayService {
   }
 
   verifyWebhookSignature(rawBody, signature) {
-    // In test mode (or when no secret is configured) we accept everything but
-    // still log it so behaviour is transparent.
     if (this.testMode || !this.cfg.webhookSecret) {
       return true;
     }
@@ -79,82 +87,138 @@ class SifaloPayService {
   // ----------------------------------------------------------------- payments
 
   /**
-   * Create a payment / charge request with SifaloPay.
+   * Create a direct mobile-money charge via SifaloPay gateway API.
    * @returns {Promise<{transactionId:string,status:string,checkoutUrl?:string,raw:object}>}
    */
-  async createPayment({ order, customerPhone, description }) {
-    const requestBody = {
-      merchant_id: this.cfg.merchantId || undefined,
-      amount: Number(order.amount),
-      currency: 'USD',
-      reference: order.id,
-      phone: customerPhone,
-      description: description || `Order ${order.id}`,
-      callback_url: this.cfg.callbackUrl,
-      return_url: `${this.cfg.returnUrl}?orderId=${order.id}`,
-    };
+  async createPayment({
+    order,
+    customerPhone,
+    paymentMethod,
+    description,
+    clientIp,
+  }) {
+    const wallet = getPaymentMethod(paymentMethod || order.paymentMethod);
+    const gateway = wallet?.gateway || 'zaad';
 
     if (this.testMode) {
-      return this.#simulateCreate(order);
+      return this.#simulateCreate(order, wallet);
     }
 
+    this.assertCredentials();
+
+    const requestBody = {
+      amount: Number(order.amount),
+      account: customerPhone,
+      gateway,
+      currency: this.cfg.currency,
+      channel: this.cfg.channel,
+      txn_order_id: order.id,
+      url: this.cfg.storeUrl,
+      ip: clientIp || '127.0.0.1',
+      billing: {
+        name: order.customerName,
+        email: order.customerEmail,
+        phone: customerPhone,
+        address: description || `${order.customerName}, ${order.customerEmail}`,
+      },
+    };
+
     try {
-      const { data } = await this.http.post(this.cfg.createPath, requestBody, {
+      const { data } = await this.http.post(this.cfg.gatewayUrl, requestBody, {
         headers: this.authHeaders(),
       });
-
-      const transactionId =
-        data.transaction_id || data.transactionId || data.id || data.reference;
-
-      if (!transactionId) {
-        throw ApiError.gateway('SifaloPay did not return a transaction id', {
-          details: data,
-        });
-      }
-
-      return {
-        transactionId: String(transactionId),
-        status: this.#mapStatus(data.status),
-        checkoutUrl: data.checkout_url || data.redirect_url || data.payment_url,
-        raw: data,
-      };
+      return this.#parsePurchaseResponse(data, order);
     } catch (error) {
       throw this.#wrapHttpError(error, 'create payment');
     }
   }
 
   /**
-   * Verify / poll the status of a payment with SifaloPay.
+   * Verify payment status via SifaloPay verify endpoint.
    */
-  async verifyPayment(transactionId) {
+  async verifyPayment(transactionId, orderId) {
     if (this.testMode) {
       return this.#simulateVerify(transactionId);
     }
 
+    const body =
+      transactionId && String(transactionId).length > 0
+        ? { sid: transactionId, order_id: orderId }
+        : { order_id: String(orderId) };
+
     try {
-      const url = `${this.cfg.verifyPath}/${encodeURIComponent(transactionId)}`;
-      const { data } = await this.http.get(url, { headers: this.authHeaders() });
-      return {
-        transactionId: String(
-          data.transaction_id || data.transactionId || data.id || transactionId
-        ),
-        status: this.#mapStatus(data.status),
-        raw: data,
-      };
+      const { data } = await this.http.post(this.cfg.verifyUrl, body, {
+        headers: { 'Content-Type': 'application/json' },
+      });
+      return this.#parseVerifyResponse(data, transactionId, orderId);
     } catch (error) {
       throw this.#wrapHttpError(error, 'verify payment');
     }
   }
 
-  // ----------------------------------------------------- status normalisation
+  #parsePurchaseResponse(data, order) {
+    const code = String(data?.code ?? '');
+    const transactionId =
+      data?.sid || data?.transaction_id || data?.transactionId || order.id;
 
-  /**
-   * Normalise the wide variety of provider status strings into our internal
-   * enum (PENDING | PROCESSING | PAID | FAILED).
-   */
+    // Official plugin: code 601 = payment received.
+    if (code === '601') {
+      return {
+        transactionId: String(transactionId),
+        status: 'PAID',
+        raw: data,
+      };
+    }
+
+    const friendly = this.#mapGatewayError(data);
+    throw ApiError.gateway(friendly, { code: 'GATEWAY_ERROR', details: data });
+  }
+
+  #parseVerifyResponse(data, transactionId, orderId) {
+    const code = String(data?.code ?? '');
+    const txnId = data?.sid || transactionId || orderId;
+
+    if (code === '601') {
+      return {
+        transactionId: String(txnId),
+        status: 'PAID',
+        raw: data,
+      };
+    }
+    if (data?.status === 'failure') {
+      return {
+        transactionId: String(txnId),
+        status: 'FAILED',
+        raw: data,
+      };
+    }
+    return {
+      transactionId: String(txnId),
+      status: 'PROCESSING',
+      raw: data,
+    };
+  }
+
+  #mapGatewayError(data) {
+    const code = String(data?.code ?? '');
+    const errors = {
+      '602': 'Transaction failed. Please check your wallet number and try again.',
+      '603': 'Insufficient balance. Please top up your wallet and try again.',
+      '604': 'Invalid wallet number. Please verify and try again.',
+      '605': 'Transaction timed out. Please try again.',
+      '606': 'SifaloPay is temporarily unavailable. Please try again later.',
+    };
+    if (errors[code]) return errors[code];
+    return (
+      data?.response ||
+      data?.message ||
+      'SifaloPay could not complete the payment. Please try again.'
+    );
+  }
+
   #mapStatus(providerStatus) {
     const status = String(providerStatus || '').toLowerCase();
-    if (['paid', 'success', 'successful', 'completed', 'approved'].includes(status)) {
+    if (['paid', 'success', 'successful', 'completed', 'approved', '601'].includes(status)) {
       return 'PAID';
     }
     if (['failed', 'declined', 'rejected', 'cancelled', 'canceled', 'error'].includes(status)) {
@@ -168,13 +232,15 @@ class SifaloPayService {
 
   // -------------------------------------------------------- test-mode helpers
 
-  #simulateCreate(order) {
+  #simulateCreate(order, wallet) {
     const transactionId = `TEST-${Date.now()}-${crypto
       .randomBytes(4)
       .toString('hex')}`;
+    const walletLabel = wallet?.label || order.paymentMethod || 'mobile wallet';
     logger.info(`[TEST MODE] Simulated SifaloPay payment created`, {
       orderId: order.id,
       transactionId,
+      gateway: wallet?.gateway,
       amount: String(order.amount),
     });
     return Promise.resolve({
@@ -183,9 +249,11 @@ class SifaloPayService {
       checkoutUrl: `${config.sifalo.returnUrl}?orderId=${order.id}&simulate=1`,
       raw: {
         test_mode: true,
-        message: 'Simulated payment intent created.',
+        code: 'processing',
+        message: `Simulated ${walletLabel} payment prompt sent to ${order.customerPhone}.`,
         transaction_id: transactionId,
-        status: 'processing',
+        gateway: wallet?.gateway,
+        payment_method: wallet?.id || order.paymentMethod,
       },
     });
   }
@@ -197,6 +265,7 @@ class SifaloPayService {
       status: 'PAID',
       raw: {
         test_mode: true,
+        code: '601',
         transaction_id: transactionId,
         status: 'paid',
         message: 'Simulated verification - marked as paid.',
@@ -204,11 +273,9 @@ class SifaloPayService {
     });
   }
 
-  /**
-   * Build a simulated webhook payload (used by the /simulate test endpoint).
-   */
   buildSimulatedWebhook(order, outcome = 'PAID') {
     const status = outcome === 'FAILED' ? 'failed' : 'paid';
+    const wallet = getPaymentMethod(order.paymentMethod);
     const payload = {
       event: `payment.${status}`,
       test_mode: true,
@@ -216,8 +283,10 @@ class SifaloPayService {
         reference: order.id,
         transaction_id: order.transactionId,
         amount: Number(order.amount),
-        currency: 'USD',
+        currency: this.cfg.currency,
         status,
+        gateway: wallet?.gateway,
+        payment_method: wallet?.id || order.paymentMethod,
       },
       timestamp: new Date().toISOString(),
     };
@@ -227,8 +296,6 @@ class SifaloPayService {
     );
     return { payload, signature };
   }
-
-  // -------------------------------------------------------------- error utils
 
   #wrapHttpError(error, action) {
     if (axios.isAxiosError(error)) {
@@ -249,10 +316,11 @@ class SifaloPayService {
         status: error.response.status,
         data,
       });
-      return ApiError.gateway(
-        data?.message || `SifaloPay rejected the request to ${action}.`,
-        { code: 'GATEWAY_ERROR', details: data }
-      );
+      const message =
+        typeof data === 'object' && data !== null
+          ? this.#mapGatewayError(data)
+          : `SifaloPay rejected the request to ${action}.`;
+      return ApiError.gateway(message, { code: 'GATEWAY_ERROR', details: data });
     }
     return error instanceof ApiError
       ? error

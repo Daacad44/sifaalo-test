@@ -14,7 +14,11 @@ const app = express();
 app.set('trust proxy', 1);
 
 // --- Security ---------------------------------------------------------------
-app.use(helmet());
+app.use(
+  config.isProd
+    ? helmet()
+    : helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false })
+);
 
 const corsOptions = {
   origin(origin, callback) {
@@ -50,20 +54,11 @@ app.use(requestLogger);
 app.use('/api', apiLimiter);
 
 // --- Routes -----------------------------------------------------------------
-app.get('/', (_req, res) => {
-  res.json({
-    success: true,
-    name: 'SifaloPay Mini E-Commerce API',
-    docs: '/api/health',
-    testMode: config.testMode,
-  });
-});
 app.use('/api', routes);
-
-// --- Error handling ---------------------------------------------------------
-app.use(notFoundHandler);
-app.use(errorHandler);
+// Unmatched API paths return JSON 404 (not the SPA HTML page).
+app.use('/api', notFoundHandler);
 
 logger.info(`App initialised (TEST_MODE=${config.testMode})`);
 
 export default app;
+export { errorHandler };

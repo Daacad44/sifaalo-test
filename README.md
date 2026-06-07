@@ -67,16 +67,15 @@ source code**.
 - Node.js 18+ (tested on Node 22)
 - PostgreSQL 14+ running locally (or a connection string to a remote instance)
 
-### 1. Backend
+### 1. Install dependencies
 
 ```bash
+npm run install:all           # from repo root (installs backend + frontend)
 cd backend
 cp .env.example .env          # then edit DATABASE_URL (and SifaloPay keys if going live)
-npm install
 npm run prisma:generate
 npm run prisma:migrate        # creates tables (use prisma:deploy in production)
 npm run seed                  # inserts the 2 test products
-npm run dev                   # http://localhost:4000
 ```
 
 A one-shot helper for non-dev environments:
@@ -86,18 +85,29 @@ npm run db:setup              # prisma migrate deploy + seed
 npm start
 ```
 
-### 2. Frontend
+### 2. Run the app (recommended — single port)
+
+```bash
+npm run dev                   # from repo root, or: cd backend && npm run dev
+```
+
+This starts the **API and React storefront together on http://localhost:4000**.
+One port serves both `/api/*` and the UI, which works reliably in cloud previews
+and tunnels that only forward a single port.
+
+### 3. Frontend-only dev (optional)
 
 ```bash
 cd frontend
 cp .env.example .env          # VITE_API_URL defaults to /api (proxied to the backend)
-npm install
-npm run dev                   # http://localhost:5173
+npm run dev                   # http://localhost:5173 — requires backend on :4000
 ```
 
-Open <http://localhost:5173>, click **Buy Now**, fill in the checkout form and
-**Proceed To Payment**. In TEST MODE you'll get an in-app payment prompt; click
-**Approve Payment** to drive a (simulated) webhook and land on the success page.
+Open <http://localhost:4000>, click **Buy Now**, choose a mobile-money wallet
+(**EVC Plus**, **ZAAD**, **Sahal**, **e-Dahab**, or **Somnet**), fill in the
+checkout form and **Proceed To Payment**. In TEST MODE you'll get an in-app
+wallet prompt; click **Approve Payment** to drive a (simulated) webhook and land
+on the success page.
 
 ---
 
@@ -110,18 +120,17 @@ commented list. Key variables:
 | Variable                | Purpose                                                       |
 | ----------------------- | ------------------------------------------------------------- |
 | `DATABASE_URL`          | PostgreSQL connection string                                  |
-| `SIFALO_API_KEY`        | SifaloPay API key (from the merchant dashboard)               |
-| `SIFALO_SECRET_KEY`     | SifaloPay secret key                                          |
-| `SIFALO_BASE_URL`       | API base URL                                                  |
-| `SIFALO_MERCHANT_ID`    | Merchant identifier                                           |
-| `SIFALO_CREATE_PATH`    | Create-payment endpoint path (override-able)                  |
-| `SIFALO_VERIFY_PATH`    | Verify-payment endpoint path (override-able)                  |
-| `SIFALO_WEBHOOK_SECRET` | Secret used to validate inbound webhook signatures (HMAC)     |
+| `SIFALO_API_USERNAME`   | API username for server-to-server Basic Auth                  |
+| `SIFALO_API_KEY`        | API key (like a password — backend only, never in frontend)   |
+| `SIFALO_GATEWAY_URL`    | Charge endpoint (`https://api.sifalopay.com/gateway/`)        |
+| `SIFALO_VERIFY_URL`     | Verify endpoint (`…/gateway/verify.php`)                      |
+| `SIFALO_STORE_URL`      | Your storefront URL sent with each payment request            |
+| `SIFALO_WEBHOOK_SECRET` | Optional secret for inbound webhook signature validation      |
 | `SIFALO_CALLBACK_URL`   | Public URL SifaloPay calls back with payment events           |
-| `SIFALO_RETURN_URL`     | Where the customer is redirected after paying                 |
+| `SIFALO_RETURN_URL`     | Where the customer lands after paying                         |
 | `TEST_MODE`             | `true` = fully simulated payments (no network, no charges)    |
 | `TEST_AMOUNT`           | The safe test amount (`0.10`)                                 |
-| `CORS_ORIGIN`           | Comma-separated allowed frontend origins                      |
+| `CORS_ORIGIN`           | Comma-separated allowed frontend origins (production)           |
 
 > **Security:** secret keys live only in the backend `.env`. They are **never**
 > sent to or exposed in the frontend. The frontend only ever knows the public
@@ -130,13 +139,20 @@ commented list. Key variables:
 ### Going live (real SifaloPay)
 
 1. Set `TEST_MODE=false`.
-2. Fill in `SIFALO_API_KEY`, `SIFALO_SECRET_KEY`, `SIFALO_MERCHANT_ID`,
-   `SIFALO_WEBHOOK_SECRET` and confirm `SIFALO_BASE_URL` / endpoint paths.
-3. Point `SIFALO_CALLBACK_URL` at a publicly reachable URL
-   (`/api/webhooks/sifalopay`).
+2. Copy your credentials from the [SifaloPay merchant API page](https://pay.sifalo.com/business/merchant/api):
+   - `SIFALO_API_USERNAME` — API username
+   - `SIFALO_API_KEY` — API key (store only in backend `.env`)
+3. Set `SIFALO_STORE_URL`, `SIFALO_RETURN_URL`, and `SIFALO_CALLBACK_URL` to
+   publicly reachable URLs.
+4. Customers choose a wallet at checkout (**EVC Plus**, **ZAAD**, **Sahal**,
+   **e-Dahab**, or **Somnet**) and pay with their mobile number.
 
-No source code changes are required — the client in
-`backend/src/services/sifalopay.service.js` reads everything from config.
+Authentication uses **HTTP Basic Auth** (`Authorization: Basic base64(username:key)`),
+matching the official Sifalo Pay WooCommerce plugin. Successful charges return
+`code: "601"`.
+
+No source code changes are required — `backend/src/services/sifalopay.service.js`
+reads everything from environment variables.
 
 ---
 
@@ -180,8 +196,9 @@ curl -X POST http://localhost:4000/api/payment/create \
 3. User submits the payment request (`POST /api/payment/create`).
 4. Backend creates a `PENDING` order + payment record.
 5. Backend asks SifaloPay to create a payment intent and stores the transaction id.
-6. User receives a payment prompt (real EVC/Zaad/card prompt in live mode; an
-   in-app prompt in TEST MODE).
+6. User receives a payment prompt on their selected wallet (EVC Plus, ZAAD,
+   Sahal, e-Dahab, Somnet — real USSD/push prompt in live mode; an in-app
+   prompt in TEST MODE).
 7. User approves the payment.
 8. SifaloPay fires a webhook to `/api/webhooks/sifalopay`.
 9. The webhook is validated, logged, de-duplicated and the order moves to `PAID`.

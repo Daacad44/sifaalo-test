@@ -6,11 +6,18 @@ import {
   deliverWebhook,
 } from '../api/services.js';
 import { formatMoney } from '../lib/format.js';
+import { getPaymentMethodLabel } from '../lib/paymentMethods.js';
+import PaymentMethodPicker from './PaymentMethodPicker.jsx';
 
 const phoneRegex = /^\+?[0-9]{7,15}$/;
 const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-const emptyForm = { customerName: '', customerPhone: '', customerEmail: '' };
+const emptyForm = {
+  customerName: '',
+  customerPhone: '',
+  customerEmail: '',
+  paymentMethod: 'evc_plus',
+};
 
 export default function CheckoutModal({ product, testMode, onClose }) {
   const navigate = useNavigate();
@@ -62,12 +69,14 @@ export default function CheckoutModal({ product, testMode, onClose }) {
         customerName: form.customerName.trim(),
         customerEmail: form.customerEmail.trim(),
         customerPhone: form.customerPhone.trim(),
+        paymentMethod: form.paymentMethod,
       });
       setOrder(result.order);
 
       if (testMode) {
-        // Simulate the customer being shown a payment prompt.
         setStep('prompt');
+      } else if (result.order?.status === 'PAID') {
+        navigate(`/status?orderId=${result.order.id}`);
       } else if (result.checkoutUrl) {
         window.location.href = result.checkoutUrl;
       } else {
@@ -171,13 +180,13 @@ export default function CheckoutModal({ product, testMode, onClose }) {
                 </div>
                 <div>
                   <label className="label" htmlFor="customerPhone">
-                    Phone Number
+                    Mobile Wallet Number
                   </label>
                   <input
                     id="customerPhone"
                     name="customerPhone"
                     className="input"
-                    placeholder="252612345678"
+                    placeholder="e.g. 252612345678 (EVC/ZAAD/Sahal)"
                     value={form.customerPhone}
                     onChange={handleChange}
                   />
@@ -202,6 +211,13 @@ export default function CheckoutModal({ product, testMode, onClose }) {
                     <p className="mt-1 text-xs text-rose-600">{errors.customerEmail}</p>
                   )}
                 </div>
+                <PaymentMethodPicker
+                  value={form.paymentMethod}
+                  disabled={submitting}
+                  onChange={(paymentMethod) =>
+                    setForm((f) => ({ ...f, paymentMethod }))
+                  }
+                />
               </div>
 
               <button type="submit" className="btn-primary mt-6 w-full" disabled={submitting}>
@@ -213,9 +229,17 @@ export default function CheckoutModal({ product, testMode, onClose }) {
           {step === 'prompt' && (
             <div className="text-center">
               <p className="text-sm text-slate-600">
-                A payment request for{' '}
+                A{' '}
+                <span className="font-semibold">
+                  {getPaymentMethodLabel(form.paymentMethod)}
+                </span>{' '}
+                payment request for{' '}
                 <span className="font-semibold">{formatMoney(product.price)}</span>{' '}
-                has been sent. Approve to complete the (simulated) payment.
+                has been sent to{' '}
+                <span className="font-semibold">{form.customerPhone}</span>.
+                {testMode
+                  ? ' Approve below to simulate the wallet prompt.'
+                  : ' Approve the prompt on your phone to complete payment.'}
               </p>
               <div className="mt-5 grid grid-cols-2 gap-3">
                 <button
