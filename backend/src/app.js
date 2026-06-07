@@ -22,6 +22,10 @@ const corsOptions = {
     if (!origin || config.corsOrigins.includes(origin) || config.corsOrigins.includes('*')) {
       return callback(null, true);
     }
+    // In development, accept any browser origin (preview tunnels, 127.0.0.1, etc.).
+    if (!config.isProd) {
+      return callback(null, true);
+    }
     return callback(new Error(`Origin ${origin} not allowed by CORS`));
   },
   credentials: true,

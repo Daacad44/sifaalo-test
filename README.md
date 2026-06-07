@@ -90,7 +90,7 @@ npm start
 
 ```bash
 cd frontend
-cp .env.example .env          # VITE_API_URL defaults to http://localhost:4000/api
+cp .env.example .env          # VITE_API_URL defaults to /api (proxied to the backend)
 npm install
 npm run dev                   # http://localhost:5173
 ```
