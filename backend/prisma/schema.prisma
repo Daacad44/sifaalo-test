@@ -1,0 +1,82 @@
+// Prisma schema for the SifaloPay mini e-commerce testing application.
+// https://www.prisma.io/docs
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum OrderStatus {
+  PENDING
+  PROCESSING
+  PAID
+  FAILED
+}
+
+enum PaymentStatus {
+  PENDING
+  PROCESSING
+  PAID
+  FAILED
+}
+
+model Product {
+  id        Int      @id @default(autoincrement())
+  name      String
+  price     Decimal  @db.Decimal(10, 2)
+  createdAt DateTime @default(now())
+
+  orders Order[]
+}
+
+model Order {
+  id            String      @id @default(cuid())
+  productId     Int?
+  customerName  String
+  customerEmail String
+  customerPhone String
+  amount        Decimal     @db.Decimal(10, 2)
+  status        OrderStatus @default(PENDING)
+  transactionId String?     @unique
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  product  Product?  @relation(fields: [productId], references: [id])
+  payments Payment[]
+
+  @@index([status])
+  @@index([customerEmail])
+}
+
+model Payment {
+  id            String        @id @default(cuid())
+  orderId       String
+  provider      String        @default("sifalopay")
+  transactionId String?       @unique
+  amount        Decimal       @db.Decimal(10, 2)
+  status        PaymentStatus @default(PENDING)
+  rawResponse   Json?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+  @@index([status])
+}
+
+// Stores every webhook payload we receive so we can audit and guarantee
+// idempotent (duplicate-safe) processing.
+model WebhookEvent {
+  id          String   @id @default(cuid())
+  provider    String   @default("sifalopay")
+  eventId     String?  @unique
+  payload     Json
+  signature   String?
+  processed   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+}
