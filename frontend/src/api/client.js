@@ -18,10 +18,20 @@ client.interceptors.response.use(
     let details;
 
     if (error.response) {
-      const apiError = error.response.data?.error;
-      message = apiError?.message || message;
-      code = apiError?.code || code;
-      details = apiError?.details;
+      const data = error.response.data;
+      const apiError = data?.error;
+      if (apiError?.message) {
+        message = apiError.message;
+        code = apiError.code || code;
+        details = apiError.details;
+      } else if (typeof data === 'string' && data.includes('could not be found')) {
+        message =
+          'API request failed. Ensure the backend is running and VITE_API_URL is set to /api in development.';
+        code = 'API_UNAVAILABLE';
+      } else if (error.response.status === 404) {
+        message = 'API endpoint not found. Check that the backend is running on port 4000.';
+        code = 'NOT_FOUND';
+      }
     } else if (error.code === 'ECONNABORTED') {
       message = 'The request timed out. Please try again.';
       code = 'TIMEOUT';
